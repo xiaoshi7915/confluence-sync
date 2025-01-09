@@ -2,7 +2,7 @@ import os
 import logging
 from datetime import datetime
 from confluence.config import DIRS, FILES, DB_CONFIG, CONFLUENCE_CONFIG
-from confluence.spiders.selenium_login import get_cookies
+from confluence.utils.selenium_login import get_cookies
 from confluence.spiders.confluence_page_tree import ConfluencePageTreeSpider
 from confluence.spiders.full_update import run_spider_with_timeout
 import subprocess
@@ -16,10 +16,14 @@ def setup_logging():
     if logger.handlers:
         logger.handlers.clear()
         
-    fh = logging.FileHandler('update_confluence.log', encoding='utf-8')
+    # 使用绝对路径
+    log_file = os.path.join(DIRS['logs_dir'], 'incremental_update.log')
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    
+    fh = logging.FileHandler(log_file, encoding='utf-8')
     fh.setLevel(logging.INFO)
     
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     fh.setFormatter(formatter)
     
     logger.addHandler(fh)
@@ -40,22 +44,6 @@ def perform_incremental_update():
     logger = setup_logging()
     
     try:
-        # 获取cookies
-        logger.info("获取cookies")
-        cookies = get_cookies(
-            CONFLUENCE_CONFIG['base_url'],
-            CONFLUENCE_CONFIG['username'],
-            CONFLUENCE_CONFIG['password']
-        )
-        
-        if not cookies:
-            logger.error("获取cookies失败")
-            return
-            
-        # 初始化爬虫
-        logger.info("初始化爬虫")
-        spider = ConfluencePageTreeSpider(CONFLUENCE_CONFIG['base_url'], cookies)
-        
         # 获取旧的页面ID列表
         old_ids_file = os.path.join(DIRS['records_dir'], FILES['all_page_ids'])
         if os.path.exists(old_ids_file):

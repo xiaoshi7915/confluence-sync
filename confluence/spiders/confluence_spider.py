@@ -20,7 +20,7 @@ from urllib.parse import urljoin
 import requests
 
 from ..config import CONFLUENCE_CONFIG, DIRS, FILES, DB_CONFIG
-from .selenium_login import get_cookies
+from ..utils.selenium_login import get_cookies
 from ..items import ConfluenceItem
 
 class ConfluenceSpider(Spider):

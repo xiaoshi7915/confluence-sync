@@ -45,13 +45,14 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             'Pragma': 'no-cache'
         },
         'LOG_LEVEL': 'DEBUG',
-        'LOG_FILE': 'update_confluence.log',
+        'LOG_FILE': os.path.join(DIRS['logs_dir'], 'update_confluence.log'),
         'LOG_FORMAT': '%(asctime)s - %(levelname)s - %(message)s'
     }
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, base_url=None, cookies=None, *args, **kwargs):
+        """初始化爬虫"""
         super().__init__(*args, **kwargs)
-        self.base_url = CONFLUENCE_CONFIG['base_url']
+        self.base_url = base_url or CONFLUENCE_CONFIG['base_url']
         self.all_pages = set()
         self.processed_count = 0
         self.start_time = None
@@ -61,7 +62,7 @@ class ConfluencePageTreeSpider(scrapy.Spider):
         # 修改缓存目录到固定位置
         self.cache_dir = os.path.join(DIRS['records_dir'], 'page_tree_cache')
         self.cache = {}
-        self.cache_expire_days = 1
+        self.cache_expire_days = 7
         # 加载历史记录和缓存
         self.load_history()
         self.load_cache()
@@ -176,7 +177,7 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             self.logger.info(f"读取cookies文件: {cookies_path}")
             if not os.path.exists(cookies_path):
                 self.logger.error(f"cookies文件不存在: {cookies_path}")
-                from .selenium_login import get_cookies
+                from ..utils.selenium_login import get_cookies
                 if not get_cookies(self.base_url, CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password']):
                     self.logger.error("获取cookies失败")
                     return
@@ -217,7 +218,7 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             # 生成请求
             for i, (parent_id, department, code) in enumerate(parent_pages, 1):
                 self.logger.info(f"处理父页面 {i}/{self.total_parent_pages} (ID: {parent_id})")
-                # 修改API URL格式，使用正确的API路径
+                # 修改API URL格式
                 api_url = f"{self.base_url}/rest/api/content/{parent_id}/child/page?expand=version,space,body.view,metadata.labels"
                 
                 # 保存父页面信息
@@ -238,6 +239,7 @@ class ConfluencePageTreeSpider(scrapy.Spider):
                     headers=headers,
                     cookies=cookies,
                     callback=self.parse,
+                    errback=self.handle_error,
                     meta={
                         'parent_id': parent_id,
                         'department': department,
@@ -245,8 +247,7 @@ class ConfluencePageTreeSpider(scrapy.Spider):
                         'depth': 0,
                         'parent_index': i
                     },
-                    dont_filter=True,
-                    errback=self.handle_error
+                    dont_filter=True
                 )
                 
         except Exception as e:
@@ -264,7 +265,7 @@ class ConfluencePageTreeSpider(scrapy.Spider):
                 if response.status in [401, 403]:
                     self.logger.error(f"认证失败，尝试重新获取cookies")
                     try:
-                        from .selenium_login import get_cookies
+                        from ..utils.selenium_login import get_cookies
                         if get_cookies(self.base_url, CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password']):
                             self.logger.info("成功重新获取cookies")
                             # 重新读取cookies
@@ -364,46 +365,158 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             
     def process_cached_data(self, data, parent_id, department, code, depth, parent_index):
         """处理缓存数据"""
-        results = data.get('results', [])
-        for result in results:
-            page_id = str(result['id'])
-            self.all_pages.add((page_id, department, code))
+        try:
+            # 读取cookies
+            cookies_path = os.path.join("confluence", "cookies.pkl")
+            if not os.path.exists(cookies_path):
+                self.logger.error("cookies文件不存在，尝试重新获取")
+                from ..utils.selenium_login import get_cookies
+                if not get_cookies(self.base_url, CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password']):
+                    self.logger.error("获取cookies失败")
+                    return []
+                self.logger.info("成功重新获取cookies")
+                
+            with open(cookies_path, "rb") as f:
+                cookies_list = pickle.load(f)
+                cookies = {cookie['name']: cookie['value'] for cookie in cookies_list}
             
-            if depth < 5:
-                api_url = f"{self.base_url}/rest/api/content/{page_id}/child/page"
-                cached_data = self.get_cache(api_url)
-                if cached_data:
-                    yield from self.process_cached_data(cached_data, page_id, department, code, depth + 1, parent_index)
-                else:
-                    yield scrapy.Request(
-                        url=api_url,
-                        cookies=self.cookies,
-                        callback=self.parse,
-                        meta={
-                            'parent_id': page_id,
-                            'department': department,
-                            'code': code,
-                            'depth': depth + 1,
-                            'parent_index': parent_index
-                        },
-                        dont_filter=True,
-                        errback=self.handle_error
+            # 添加必要的请求头
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-User': '?1',
+                'Sec-Fetch-Dest': 'document',
+                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"'
+            }
+            
+            # 先访问父页面
+            view_url = f"{self.base_url}/pages/viewpage.action?pageId={parent_id}"
+            try:
+                response = requests.get(view_url, cookies=cookies, headers=headers, timeout=10, allow_redirects=False)
+                if response.status_code == 302:
+                    location = response.headers.get('Location', '')
+                    if 'login' in location:
+                        self.logger.error("会话已过期，尝试重新获取cookies")
+                        if get_cookies(self.base_url, CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password']):
+                            self.logger.info("成功重新获取cookies")
+                            with open(cookies_path, "rb") as f:
+                                cookies_list = pickle.load(f)
+                                cookies = {cookie['name']: cookie['value'] for cookie in cookies_list}
+                            response = requests.get(view_url, cookies=cookies, headers=headers, timeout=10)
+                    else:
+                        self.logger.error(f"重定向到未知页面: {location}")
+                        return []
+                elif response.status_code == 404:
+                    self.logger.warning(
+                        f"页面不存在或无访问权限: 父页面 {parent_index}/{self.total_parent_pages} "
+                        f"(ID: {parent_id})，深度: {depth}，部门: {department}，代码: {code}"
                     )
+                    if (parent_id, department, code) in self.all_pages:
+                        self.all_pages.remove((parent_id, department, code))
+                    return []
+                elif response.status_code != 200:
+                    self.logger.error(f"访问页面时出现未知错误: {response.status_code}")
+                    return []
+                
+                # 获取子页面列表
+                children_url = f"{self.base_url}/plugins/pagetree/naturalchildren.action?decorator=none&excerpt=false&sort=position&reverse=false&disableLinks=false&expandCurrent=true&hasRoot=true&pageId={parent_id}&treeId=0&startDepth=0"
+                headers.update({
+                    'Accept': '*/*',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': view_url
+                })
+                
+                try:
+                    response = requests.get(children_url, cookies=cookies, headers=headers, timeout=10)
+                    if response.status_code != 200:
+                        self.logger.error(f"获取子页面列表失败: {response.status_code}")
+                        return []
+                        
+                    # 解析HTML获取子页面ID
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    child_links = soup.select('a[href*="pageId="]')
+                    child_ids = []
+                    for link in child_links:
+                        href = link.get('href', '')
+                        if 'pageId=' in href:
+                            page_id = href.split('pageId=')[-1].split('&')[0]
+                            child_ids.append(page_id)
+                            
+                    # 处理每个子页面
+                    for page_id in child_ids:
+                        self.all_pages.add((page_id, department, code))
+                        
+                        if depth < 5:
+                            # 递归处理子页面
+                            child_url = f"{self.base_url}/plugins/pagetree/naturalchildren.action?decorator=none&excerpt=false&sort=position&reverse=false&disableLinks=false&expandCurrent=true&hasRoot=true&pageId={page_id}&treeId=0&startDepth=0"
+                            cached_data = self.get_cache(child_url)
+                            if cached_data:
+                                yield from self.process_cached_data(cached_data, page_id, department, code, depth + 1, parent_index)
+                            else:
+                                yield scrapy.Request(
+                                    url=child_url,
+                                    cookies=cookies,
+                                    headers=headers,
+                                    callback=self.parse,
+                                    meta={
+                                        'parent_id': page_id,
+                                        'department': department,
+                                        'code': code,
+                                        'depth': depth + 1,
+                                        'parent_index': parent_index
+                                    },
+                                    dont_filter=True,
+                                    errback=self.handle_error
+                                )
+                            
+                except Exception as e:
+                    self.logger.error(f"获取子页面列表时出错: {str(e)}")
+                    return []
+                    
+            except Exception as e:
+                self.logger.error(f"访问页面时出错: {str(e)}")
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"处理缓存数据时出错: {str(e)}")
+            return []
     
     def handle_error(self, failure):
         """处理请求错误"""
         parent_index = failure.request.meta.get('parent_index', 0)
         parent_id = failure.request.meta.get('parent_id', 'unknown')
         depth = failure.request.meta.get('depth', 0)
+        department = failure.request.meta.get('department', '')
+        code = failure.request.meta.get('code', '')
         
         # 获取完整的URL
         url = failure.request.url
         
+        # 如果是404错误，记录并继续
+        if hasattr(failure.value, 'response') and failure.value.response.status == 404:
+            self.logger.warning(
+                f"页面不存在或无访问权限: 父页面 {parent_index}/{self.total_parent_pages} "
+                f"(ID: {parent_id})，深度: {depth}，部门: {department}，代码: {code}"
+            )
+            # 从 all_pages 中移除这个页面
+            if (parent_id, department, code) in self.all_pages:
+                self.all_pages.remove((parent_id, department, code))
+            return
+        
         # 如果是认证相关错误，尝试重新获取cookie
-        if failure.value.response.status in [401, 403]:
+        if hasattr(failure.value, 'response') and failure.value.response.status in [401, 403]:
             self.logger.error(f"认证失败，尝试重新获取cookies")
             try:
-                from .selenium_login import get_cookies
+                from ..utils.selenium_login import get_cookies
                 if get_cookies(self.base_url, CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password']):
                     self.logger.info("成功重新获取cookies")
                     # 重新读取cookies
@@ -422,9 +535,6 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             f"URL: {url}"
         )
         
-        if hasattr(failure.value, 'response') and failure.value.response.status == 404:
-            error_msg += "\n可能的原因：\n1. 页面不存在\n2. 没有访问权限\n3. 页面ID格式不正确"
-            
         self.logger.error(error_msg)
     
     def closed(self, reason):

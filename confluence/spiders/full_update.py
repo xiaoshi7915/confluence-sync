@@ -4,7 +4,7 @@ from datetime import datetime
 import subprocess
 import signal
 from confluence.config import DIRS, FILES, CONFLUENCE_CONFIG
-from confluence.spiders.selenium_login import get_cookies
+from confluence.utils.selenium_login import get_cookies
 import time
 
 logger = logging.getLogger('full_update')
