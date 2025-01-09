@@ -25,6 +25,19 @@ log_message() {
 # 开始执行
 log_message "开始执行增量更新..."
 
+# 获取 cookies
+log_message "开始获取 cookies"
+python3 -c "
+from confluence.spiders.selenium_login import get_cookies
+from confluence.config import CONFLUENCE_CONFIG
+get_cookies(CONFLUENCE_CONFIG['base_url'], CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password'])
+" >> $LOG_FILE 2>&1
+
+if [ $? -ne 0 ]; then
+    log_message "获取 cookies 失败"
+    exit 1
+fi
+
 # 执行增量更新（包括爬取和比较页面ID）
 python3 -c "
 from confluence.spiders.incremental_update import perform_incremental_update

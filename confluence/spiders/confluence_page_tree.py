@@ -29,21 +29,29 @@ class ConfluencePageTreeSpider(scrapy.Spider):
         'CONCURRENT_REQUESTS_PER_DOMAIN': 4,
         'DOWNLOAD_DELAY': 1,
         'COOKIES_ENABLED': True,
-        'COOKIES_DEBUG': False,
+        'COOKIES_DEBUG': True,
         'RETRY_ENABLED': True,
         'RETRY_TIMES': 3,
         'RETRY_HTTP_CODES': [401, 403, 500, 502, 503, 504, 522, 524, 408, 429],
         'DOWNLOAD_TIMEOUT': 30,
         'ROBOTSTXT_OBEY': False,
-        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'LOG_LEVEL': 'INFO',
+        'DEFAULT_REQUEST_HEADERS': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Connection': 'keep-alive',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+        },
+        'LOG_LEVEL': 'DEBUG',
         'LOG_FILE': 'update_confluence.log',
         'LOG_FORMAT': '%(asctime)s - %(levelname)s - %(message)s'
     }
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.base_url = CONFLUENCE_CONFIG['url']
+        self.base_url = CONFLUENCE_CONFIG['base_url']
         self.all_pages = set()
         self.processed_count = 0
         self.start_time = None
@@ -209,14 +217,25 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             # 生成请求
             for i, (parent_id, department, code) in enumerate(parent_pages, 1):
                 self.logger.info(f"处理父页面 {i}/{self.total_parent_pages} (ID: {parent_id})")
-                api_url = f"{self.base_url}/rest/api/content/{parent_id}/child/page"
+                # 修改API URL格式，使用正确的API路径
+                api_url = f"{self.base_url}/rest/api/content/{parent_id}/child/page?expand=version,space,body.view,metadata.labels"
                 
                 # 保存父页面信息
                 self.all_pages.add((parent_id, department, code))
                 self.save_progress(force=True)
                 
+                # 添加更多的请求头
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': f"{self.base_url}/pages/viewpage.action?pageId={parent_id}"
+                }
+                
                 yield scrapy.Request(
                     url=api_url,
+                    headers=headers,
                     cookies=cookies,
                     callback=self.parse,
                     meta={
@@ -235,8 +254,12 @@ class ConfluencePageTreeSpider(scrapy.Spider):
 
     def parse(self, response):
         try:
+            self.logger.info(f"正在处理URL: {response.url}")
+            self.logger.info(f"响应头: {response.headers}")
+            
             if response.status != 200:
                 self.logger.error(f"请求失败，状态码: {response.status}, URL: {response.url}")
+                self.logger.error(f"响应内容: {response.text[:500]}")  # 只显示前500个字符
                 # 如果是认证相关错误，尝试重新获取cookie
                 if response.status in [401, 403]:
                     self.logger.error(f"认证失败，尝试重新获取cookies")
@@ -373,6 +396,9 @@ class ConfluencePageTreeSpider(scrapy.Spider):
         parent_id = failure.request.meta.get('parent_id', 'unknown')
         depth = failure.request.meta.get('depth', 0)
         
+        # 获取完整的URL
+        url = failure.request.url
+        
         # 如果是认证相关错误，尝试重新获取cookie
         if failure.value.response.status in [401, 403]:
             self.logger.error(f"认证失败，尝试重新获取cookies")
@@ -389,11 +415,17 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             except Exception as e:
                 self.logger.error(f"重新获取cookies失败: {str(e)}")
         
-        self.logger.error(
+        error_msg = (
             f"请求失败: {failure.value}, "
             f"状态码: {failure.value.response.status if hasattr(failure.value, 'response') else 'unknown'}, "
-            f"父页面 {parent_index}/{self.total_parent_pages} (ID: {parent_id})，深度: {depth}"
+            f"父页面 {parent_index}/{self.total_parent_pages} (ID: {parent_id})，深度: {depth}, "
+            f"URL: {url}"
         )
+        
+        if hasattr(failure.value, 'response') and failure.value.response.status == 404:
+            error_msg += "\n可能的原因：\n1. 页面不存在\n2. 没有访问权限\n3. 页面ID格式不正确"
+            
+        self.logger.error(error_msg)
     
     def closed(self, reason):
         """爬虫关闭时的处理"""
@@ -416,6 +448,127 @@ class ConfluencePageTreeSpider(scrapy.Spider):
             )
         except Exception as e:
             self.logger.error(f"关闭爬虫时出错: {str(e)}")
+
+    def get_page_info(self, page_id):
+        """获取页面信息"""
+        try:
+            self.logger.info(f"获取页面信息: {page_id}")
+            api_url = f"{self.base_url}/rest/api/content/{page_id}?expand=version,space,body.view,metadata.labels"
+            self.logger.debug(f"API URL: {api_url}")
+            
+            response = self.session.get(api_url)
+            if response.status_code == 200:
+                data = response.json()
+                self.logger.info(f"成功获取页面信息: {data.get('title', 'Unknown Title')}")
+                return data
+            else:
+                self.logger.error(f"获取页面信息失败: HTTP {response.status_code}")
+                self.logger.error(f"响应内容: {response.text}")
+                return None
+        except Exception as e:
+            self.logger.error(f"获取页面信息异常: {str(e)}")
+            return None
+            
+    def get_child_pages(self, parent_id):
+        """获取子页面列表"""
+        try:
+            self.logger.info(f"获取子页面列表: {parent_id}")
+            api_url = f"{self.base_url}/rest/api/content/{parent_id}/child/page?expand=version"
+            self.logger.debug(f"API URL: {api_url}")
+            
+            response = self.session.get(api_url)
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                self.logger.info(f"找到 {len(results)} 个子页面")
+                return results
+            else:
+                self.logger.error(f"获取子页面列表失败: HTTP {response.status_code}")
+                self.logger.error(f"响应内容: {response.text}")
+                return []
+        except Exception as e:
+            self.logger.error(f"获取子页面列表异常: {str(e)}")
+            return []
+            
+    def get_all_pages(self, parent_ids):
+        """获取所有页面信息"""
+        all_pages = []
+        visited = set()
+        
+        def traverse(page_id):
+            if page_id in visited:
+                self.logger.debug(f"页面已访问过: {page_id}")
+                return
+                
+            visited.add(page_id)
+            self.logger.info(f"遍历页面: {page_id}")
+            
+            # 获取页面信息
+            page_info = self.get_page_info(page_id)
+            if page_info:
+                all_pages.append(page_info)
+                
+                # 获取子页面
+                child_pages = self.get_child_pages(page_id)
+                for child in child_pages:
+                    child_id = child['id']
+                    traverse(child_id)
+            else:
+                self.logger.warning(f"无法获取页面信息: {page_id}")
+                
+        # 遍历所有父页面
+        for parent_id in parent_ids:
+            self.logger.info(f"开始遍历父页面: {parent_id}")
+            traverse(parent_id)
+            
+        self.logger.info(f"总共获取到 {len(all_pages)} 个页面")
+        return all_pages
+        
+    def get_page_updates(self, start_time=None):
+        """获取页面更新信息"""
+        try:
+            self.logger.info("获取页面更新信息")
+            if start_time:
+                self.logger.info(f"开始时间: {start_time}")
+            
+            # 读取父页面ID
+            with open('records/all_father_page_ids.txt', 'r') as f:
+                parent_ids = [line.strip() for line in f if line.strip()]
+            self.logger.info(f"读取到 {len(parent_ids)} 个父页面ID")
+            
+            # 获取所有页面
+            all_pages = self.get_all_pages(parent_ids)
+            
+            # 过滤更新的页面
+            updates = []
+            for page in all_pages:
+                try:
+                    last_modified = datetime.fromisoformat(
+                        page['version']['when'].replace('Z', '+00:00'))
+                    
+                    if not start_time or last_modified > start_time:
+                        update = {
+                            'id': page['id'],
+                            'title': page['title'],
+                            'url': f"{self.base_url}/pages/viewpage.action?pageId={page['id']}",
+                            'space': page['space']['name'],
+                            'author': page['version']['by']['displayName'],
+                            'last_modified': last_modified.strftime('%Y-%m-%d %H:%M:%S'),
+                            'department': next((label['name'] for label in 
+                                page['metadata']['labels']['results']
+                                if label['name'].startswith('部门/')), '未知')
+                        }
+                        updates.append(update)
+                        self.logger.info(f"找到更新: {update['title']}")
+                except Exception as e:
+                    self.logger.error(f"处理页面更新信息异常: {str(e)}")
+                    continue
+                    
+            self.logger.info(f"总共找到 {len(updates)} 个更新")
+            return updates
+        except Exception as e:
+            self.logger.error(f"获取页面更新信息异常: {str(e)}")
+            return []
 
 
 

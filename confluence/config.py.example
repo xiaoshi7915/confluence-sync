@@ -1,5 +1,5 @@
 CONFLUENCE_CONFIG = {
-    'url': 'https://confluence.example.com',
+    'base_url': 'https://confluence.example.com',
     'username': 'your_username',
     'password': 'your_password'
 }

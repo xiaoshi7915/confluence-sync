@@ -1,0 +1,16 @@
+# [Type]: Short description (50 chars or less)
+
+# Types can be:
+# feat     (new feature)
+# fix      (bug fix)
+# docs     (documentation changes)
+# style    (formatting, missing semi colons, etc)
+# refactor (refactoring production code)
+# test     (adding tests, refactoring tests)
+# chore    (updating build tasks, package manager configs, etc)
+
+# Optional longer description
+# [Why is this change needed?]
+
+# Optional footer
+# [Reference to related issues, e.g. "Fixes #123", "Related to #456"] 

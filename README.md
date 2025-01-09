@@ -143,5 +143,5 @@ MIT License
 
 ## 联系方式
 
-- 作者：陈小石
-- 邮箱：chenxs@flamelephant.com
+- Author: Chen Xiaoshi
+- Email: chenxs@flamelephant.com

@@ -52,7 +52,7 @@ class ConfluenceSpider(Spider):
     def __init__(self, page_ids_file=None, *args, **kwargs):
         """初始化爬虫"""
         super().__init__(*args, **kwargs)
-        self.base_url = CONFLUENCE_CONFIG['url']
+        self.base_url = CONFLUENCE_CONFIG['base_url']
         self.download_dir = DIRS['pdf_dir']
         self.processed_count = 0
         self.start_time = None

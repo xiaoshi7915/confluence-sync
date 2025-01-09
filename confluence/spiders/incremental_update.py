@@ -1,8 +1,10 @@
 import os
 import logging
 from datetime import datetime
-from confluence.config import DIRS, FILES, DB_CONFIG  # 添加DB_CONFIG导入
-from confluence.spiders.full_update import run_spider_with_timeout  # 添加这行导入
+from confluence.config import DIRS, FILES, DB_CONFIG, CONFLUENCE_CONFIG
+from confluence.spiders.selenium_login import get_cookies
+from confluence.spiders.confluence_page_tree import ConfluencePageTreeSpider
+from confluence.spiders.full_update import run_spider_with_timeout
 import subprocess
 import pymysql
 
@@ -38,6 +40,22 @@ def perform_incremental_update():
     logger = setup_logging()
     
     try:
+        # 获取cookies
+        logger.info("获取cookies")
+        cookies = get_cookies(
+            CONFLUENCE_CONFIG['base_url'],
+            CONFLUENCE_CONFIG['username'],
+            CONFLUENCE_CONFIG['password']
+        )
+        
+        if not cookies:
+            logger.error("获取cookies失败")
+            return
+            
+        # 初始化爬虫
+        logger.info("初始化爬虫")
+        spider = ConfluencePageTreeSpider(CONFLUENCE_CONFIG['base_url'], cookies)
+        
         # 获取旧的页面ID列表
         old_ids_file = os.path.join(DIRS['records_dir'], FILES['all_page_ids'])
         if os.path.exists(old_ids_file):
@@ -106,8 +124,10 @@ def perform_incremental_update():
 
 def get_daily_updates():
     """获取当天的更新内容"""
+    logger = logging.getLogger('incremental_update')
     try:
         # 连接数据库
+        logger.info("正在连接数据库获取每日更新...")
         conn = pymysql.connect(
             host=DB_CONFIG['host'],
             user=DB_CONFIG['user'],
@@ -127,18 +147,21 @@ def get_daily_updates():
             ORDER BY last_modified DESC
         """
         
+        logger.info(f"执行SQL: {sql}")
         cursor.execute(sql)
         updates = cursor.fetchall()
+        logger.info(f"获取到 {len(updates)} 条更新")
         
         return updates
         
     except Exception as e:
-        logging.error(f"获取每日更新失败: {str(e)}")
+        logger.error(f"获取每日更新失败: {str(e)}")
         return []
         
     finally:
         if 'conn' in locals():
             conn.close()
+            logger.info("数据库连接已关闭")
 
 def get_hourly_updates():
     """获取最近一小时的更新内容"""

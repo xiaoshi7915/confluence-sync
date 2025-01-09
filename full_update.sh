@@ -108,9 +108,9 @@ fi
 # 获取 cookies
 log_message "开始获取 cookies"
 python3 -c "
-from confluence.spiders.selenium_login import get_cookies
+from confluence.utils.selenium_login import get_cookies
 from confluence.config import CONFLUENCE_CONFIG
-get_cookies(CONFLUENCE_CONFIG['url'], CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password'])
+get_cookies(CONFLUENCE_CONFIG['base_url'], CONFLUENCE_CONFIG['username'], CONFLUENCE_CONFIG['password'])
 " >> $LOG_FILE 2>&1
 
 if [ $? -ne 0 ]; then

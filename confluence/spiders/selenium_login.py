@@ -82,7 +82,7 @@ def get_cookies(url, username, password, max_retries=3):
 if __name__ == "__main__":
     from confluence.config import CONFLUENCE_CONFIG
     get_cookies(
-        CONFLUENCE_CONFIG['url'],
+        CONFLUENCE_CONFIG['base_url'],
         CONFLUENCE_CONFIG['username'],
         CONFLUENCE_CONFIG['password']
     )

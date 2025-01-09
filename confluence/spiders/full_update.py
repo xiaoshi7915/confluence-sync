@@ -3,7 +3,8 @@ import logging
 from datetime import datetime
 import subprocess
 import signal
-from confluence.config import DIRS, FILES
+from confluence.config import DIRS, FILES, CONFLUENCE_CONFIG
+from confluence.spiders.selenium_login import get_cookies
 import time
 
 logger = logging.getLogger('full_update')
@@ -11,6 +12,18 @@ logger = logging.getLogger('full_update')
 def run_spider_with_timeout(spider_name, timeout=3600, **kwargs):
     """运行爬虫并设置超时"""
     try:
+        # 获取 cookies
+        logger.info("获取 cookies")
+        cookies = get_cookies(
+            CONFLUENCE_CONFIG['base_url'],
+            CONFLUENCE_CONFIG['username'],
+            CONFLUENCE_CONFIG['password']
+        )
+        
+        if not cookies:
+            logger.error("获取 cookies 失败")
+            return False
+            
         # 构建命令
         scrapy_path = os.path.join(DIRS['venv_dir'], 'bin', 'scrapy')
         cmd = [scrapy_path, 'crawl', spider_name]
