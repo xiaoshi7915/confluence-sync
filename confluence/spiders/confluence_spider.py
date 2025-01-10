@@ -44,7 +44,7 @@ class ConfluenceSpider(Spider):
             'confluence.pipelines.ConfluencePipeline': 300,
         },
         'LOG_LEVEL': 'INFO',
-        'LOG_FILE': 'update_confluence.log',
+        'LOG_FILE': os.path.join(DIRS['logs_dir'], 'update_confluence.log'),
         'LOG_FORMAT': '%(asctime)s - %(levelname)s - %(message)s',
         'LOG_ENABLED': True
     }
